@@ -206,13 +206,6 @@ CREATE TABLE reply_tweets (
     account_id INTEGER REFERENCES twitter_accounts(id), -- 使用的Twitter账号ID
     reply_time TIMESTAMP NOT NULL,          -- 回复时间
     
-    -- 回复推文的互动指标
-    retweet_count INTEGER DEFAULT 0,        -- 转发数
-    favorite_count INTEGER DEFAULT 0,        -- 点赞数
-    reply_count INTEGER DEFAULT 0,          -- 回复数
-    quote_count INTEGER DEFAULT 0,          -- 引用数
-    view_count INTEGER DEFAULT 0,           -- 浏览数
-    
     -- 曝光量更新记录
     last_impression_update TIMESTAMP,       -- 最后一次更新曝光量的时间
     next_update_time TIMESTAMP,             -- 下次允许更新时间
@@ -229,7 +222,33 @@ CREATE INDEX idx_reply_tweets_original ON reply_tweets(original_tweet_id);
 CREATE INDEX idx_reply_tweets_account ON reply_tweets(account_id);
 ```
 
-#### 1.4 回复模板表 (reply_templates)
+#### 1.4 曝光量历史表 (impression_history)
+
+```sql
+CREATE TABLE impression_history (
+    id SERIAL PRIMARY KEY,
+    reply_tweet_id INTEGER REFERENCES reply_tweets(id), -- 关联的回复推文ID
+    
+    -- 互动指标
+    retweet_count INTEGER DEFAULT 0,        -- 转发数
+    favorite_count INTEGER DEFAULT 0,        -- 点赞数
+    reply_count INTEGER DEFAULT 0,          -- 回复数
+    quote_count INTEGER DEFAULT 0,          -- 引用数
+    view_count INTEGER DEFAULT 0,           -- 浏览数
+    
+    -- 计算指标
+    engagement_rate FLOAT,                  -- 互动率(互动数/曝光数)
+    favorite_rate FLOAT,                    -- 点赞率(点赞数/曝光数)
+    
+    collected_at TIMESTAMP NOT NULL,        -- 数据收集时间
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_impression_history_reply_tweet ON impression_history(reply_tweet_id);
+CREATE INDEX idx_impression_history_collected_at ON impression_history(collected_at);
+```
+
+#### 1.5 回复模板表 (reply_templates)
 
 ```sql
 CREATE TABLE reply_templates (
@@ -243,7 +262,7 @@ CREATE TABLE reply_templates (
 );
 ```
 
-#### 1.5 系统配置表 (system_configs)
+#### 1.6 系统配置表 (system_configs)
 
 ```sql
 CREATE TABLE system_configs (
@@ -266,7 +285,7 @@ INSERT INTO system_configs (config_key, config_value, description) VALUES
 ('IMPRESSION_BATCH_SIZE', '50', '每批更新曝光量的推文数量');
 ```
 
-#### 1.6 任务执行记录表 (task_execution_logs)
+#### 1.7 任务执行记录表 (task_execution_logs)
 
 ```sql
 CREATE TABLE task_execution_logs (
@@ -290,7 +309,7 @@ CREATE INDEX idx_task_logs_status ON task_execution_logs(status);
 CREATE INDEX idx_task_logs_account ON task_execution_logs(account_id);
 ```
 
-#### 1.7 Twitter账号表 (twitter_accounts)
+#### 1.8 Twitter账号表 (twitter_accounts)
 
 ```sql
 CREATE TABLE twitter_accounts (
@@ -333,7 +352,7 @@ CREATE INDEX idx_twitter_accounts_usable ON twitter_accounts(is_usable, priority
 CREATE INDEX idx_twitter_accounts_cooling ON twitter_accounts(cooling_until);
 ```
 
-#### 1.8 Twitter API调用日志表 (twitter_api_logs)
+#### 1.9 Twitter API调用日志表 (twitter_api_logs)
 
 ```sql
 CREATE TABLE twitter_api_logs (
@@ -368,14 +387,7 @@ CREATE INDEX idx_twitter_api_logs_status ON twitter_api_logs(status_code);
 - 互动量趋势
 - 回复效果趋势
 
-#### 2.3 系统监控指标
-
-- API调用成功率
-- 系统响应时间
-- 资源使用率
-- 错误率统计
-
-#### 2.4 业务监控指标
+#### 2.3 业务监控指标
 
 - 关键词匹配准确率
 - 回复发送成功率
@@ -532,8 +544,8 @@ sequenceDiagram
             Impression->>Twitter: 使用账号获取曝光量数据
             Twitter-->>Impression: 返回曝光量
             Impression->>AccountManager: 更新账号使用统计(impression_call_count+=1)
-            Impression->>Storage: 更新曝光量(reply_tweets表)
-            Impression->>Storage: 记录更新时间(last_impression_update=now(), next_update_time=now()+间隔)
+            Impression->>Storage: 存储曝光历史(impression_history表)
+            Impression->>Storage: 更新回复推文记录(last_impression_update=now(), next_update_time=now()+间隔, update_count+=1)
             Impression->>TaskLog: 更新处理数量和使用的账号(processed_count, success_count)
             Impression->>Monitor: 记录更新状态
         else 不满足间隔
@@ -597,13 +609,13 @@ sequenceDiagram
     participant Processor as 数据处理器
     
     Client->>API: 请求曝光量分析(start_date, end_date, group_by)
-    API->>DB: 查询指定时间范围内的曝光数据
+    API->>DB: 查询指定时间范围内的曝光历史数据(impression_history表)
     
     DB-->>API: 返回原始曝光数据
     
     API->>Processor: 按时间分组格式化数据
     Processor->>Processor: 计算各互动指标(views, favorites等)
-    Processor->>Processor: 计算互动率(favorite_rate等)
+    Processor->>Processor: 计算互动率变化趋势
     Processor->>Processor: 生成时间序列数据
     Processor->>Processor: 计算总计和平均值
     
