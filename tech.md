@@ -406,38 +406,6 @@ async def get_interaction_analytics(
     pass
 ```
 
-#### 3.2 系统监控API
-
-```python
-@router.get("/monitoring/system")
-async def get_system_status():
-    """获取系统状态"""
-    pass
-
-@router.get("/monitoring/metrics")
-async def get_system_metrics(
-    metric_type: str,
-    start_time: datetime,
-    end_time: datetime
-):
-    """获取系统指标"""
-    pass
-```
-
-#### 3.3 审计日志API
-
-```python
-@router.get("/audit/logs")
-async def get_audit_logs(
-    user_id: Optional[str] = None,
-    action_type: Optional[str] = None,
-    start_time: datetime,
-    end_time: datetime
-):
-    """获取审计日志"""
-    pass
-```
-
 ### 4. 核心流程设计
 
 #### 4.1 关键词搜索与数据采集流程
@@ -454,7 +422,7 @@ sequenceDiagram
 
     Scheduler->>TaskLog: 记录任务开始(task_execution_logs表)
     TaskLog->>Keywords: 触发关键词搜索任务
-    Keywords->>Storage: 获取待搜索关键词(status='pending')
+    Keywords->>Storage: 获取待搜索关键词(status!='ended')
     loop 每个关键词
         Keywords->>Storage: 更新关键词状态(status='searching')
         Keywords->>Storage: 获取关键词信息(max_tweets_limit, current_tweets_count)
@@ -466,7 +434,11 @@ sequenceDiagram
             Twitter-->>Keywords: 返回搜索结果(tweets)
             Keywords->>Storage: 批量存储搜索结果(search_tweets表)
             Storage-->>Keywords: 返回存储结果(inserted_count)
-            Keywords->>Storage: 更新关键词状态和计数(status='ended', current_tweets_count+=inserted_count)
+            alt current_tweets_count + inserted_count >= max_tweets_limit
+                Keywords->>Storage: 更新关键词状态和计数(status='ended', current_tweets_count+=inserted_count)
+            else current_tweets_count + inserted_count < max_tweets_limit
+                Keywords->>Storage: 只更新计数(current_tweets_count+=inserted_count)
+            end
             Keywords->>AccountManager: 更新账号使用统计(search_call_count+=1, last_used_time=now())
             Keywords->>TaskLog: 更新处理数量和使用的账号(processed_count, success_count)
             Keywords->>Monitor: 记录成功状态
@@ -637,76 +609,5 @@ sequenceDiagram
     
     Processor-->>API: 返回分析结果(time_series, summary)
     API-->>Client: 返回格式化的分析数据
-```
-
-#### 4.6 系统监控流程
-
-```mermaid
-sequenceDiagram
-    participant Monitor as 监控任务
-    participant System as 系统资源监控
-    participant API as API监控
-    participant Data as 数据采集监控
-    participant Stats as 统计计算监控
-    participant DB as 数据库
-    participant Alert as 告警系统
-    
-    Monitor->>System: 检查系统资源使用情况
-    System->>System: 收集CPU/内存/磁盘使用率
-    System-->>Monitor: 返回资源使用数据
-    
-    Monitor->>API: 检查API调用状态
-    API->>DB: 查询API调用统计和错误率
-    DB-->>API: 返回API调用数据
-    API-->>Monitor: 返回API状态信息
-    
-    Monitor->>Data: 检查数据采集状态
-    Data->>DB: 查询数据采集完整性指标
-    DB-->>Data: 返回采集状态数据
-    Data-->>Monitor: 返回采集状态信息
-    
-    Monitor->>Stats: 检查统计计算状态
-    Stats->>DB: 查询计算任务执行情况
-    DB-->>Stats: 返回计算任务数据
-    Stats-->>Monitor: 返回计算状态信息
-    
-    alt 发现异常
-        Monitor->>Alert: 触发告警(异常类型，级别)
-        Alert->>Alert: 生成告警消息
-        Alert-->>Monitor: 确认告警已发送
-    end
-    
-    Monitor->>DB: 保存监控数据
-```
-
-#### 4.7 审计日志记录流程
-
-```mermaid
-sequenceDiagram
-    participant Client as 客户端
-    participant Auth as 认证中心
-    participant Audit as 审计日志服务
-    participant DB as 数据库
-    participant Alert as 告警系统
-    
-    Client->>Auth: 发起操作请求(user_id, action)
-    Auth->>Auth: 验证用户权限
-    
-    alt 权限验证通过
-        Auth-->>Client: 允许操作
-        Client->>Audit: 记录操作(user_id, action_type, target_type, target_id)
-        Audit->>Audit: 处理敏感信息脱敏
-        Audit->>DB: 异步写入日志记录
-        
-        alt 需要触发告警
-            Audit->>Alert: 发送安全告警
-        end
-        
-        Audit-->>Client: 确认日志已记录
-    else 权限验证失败
-        Auth-->>Client: 拒绝操作
-        Auth->>Audit: 记录未授权访问
-        Audit->>Alert: 发送安全告警
-    end
 ```
 
